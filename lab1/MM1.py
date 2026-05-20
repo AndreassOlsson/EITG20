@@ -30,6 +30,10 @@ class larger:
 
 
 class generator(larger):
+    """
+    A generator only treats GENERATE signals.
+    """
+
     def __init__(self, sendTo, lmbda):
         self.sendTo = sendTo
         self.lmbda = lmbda
@@ -46,6 +50,10 @@ class generator(larger):
 
 
 class queue(larger):
+    """A queue handle arrivals, departures and measurements.
+
+    """
+
     def __init__(self, mu, sendTo):
         self.numberInQueue = 0
         self.sumMeasurements = 0
@@ -55,17 +63,30 @@ class queue(larger):
         self.mu = mu
         self.sendTo = sendTo
 
+        # Adjustments for a limited queue
+        self.capacity = 7
+        self.numberBlocked = 0
+        self.totalArrivals = 0
+
+        
+
     def serviceTime(self):
         return simTime + random.expovariate(self.mu)
 
     def treatSignal(self, x, info):
         if x == ARRIVAL:
-            if self.numberInQueue == 0:
-                send(
-                    DEPARTURE, self.serviceTime(), self, []
-                )  # Schedule  a departure for the arrival customer if queue is empty
-            self.numberInQueue = self.numberInQueue + 1
-            self.buffer.put(info)
+            self.totalArrivals += 1
+
+            if self.numberInQueue < self.capacity:
+                if self.numberInQueue == 0:
+                    send(
+                        DEPARTURE, self.serviceTime(), self, []
+                    )  # Schedule  a departure for the arrival customer if queue is empty
+                self.numberInQueue = self.numberInQueue + 1
+                self.buffer.put(info)            
+            else:
+                self.numberBlocked += 1
+
         elif x == DEPARTURE:
             self.numberInQueue = self.numberInQueue - 1
             if self.numberInQueue > 0:
@@ -73,6 +94,7 @@ class queue(larger):
                     DEPARTURE, self.serviceTime(), self, []
                 )  # Schedule  a departure for next customer in queue
             send(ARRIVAL, simTime, self.sendTo, self.buffer.get())
+
         elif x == MEASUREMENT:
             self.measuredValues.append(self.numberInQueue)
             self.sumMeasurements = self.sumMeasurements + self.numberInQueue
@@ -101,15 +123,15 @@ class sink(larger):
 ###################################################
 
 # Uppdatera stopTime till 1000 sekunder enligt labbinstruktionerna
-stopTime = 3000.0
+stopTime = 30000.0
 
-lmbda = 7.0
-mu = 10.0
+lmbda = 7.0 # Ankomstintensitet
+mu = 10.0 # Betjäningsintensitet
 
 # Skapa instanser av systemets delar (vi kopplar dem baklänges för att referenserna ska stämma)
-s = sink()
-q = queue(mu, s)
-gen = generator(q, lmbda)
+s = sink() # Sink is just a sink
+q = queue(mu, s) # Queue sends to sink
+gen = generator(q, lmbda) # Generator sends to queue
 
 # Schemalägg de första händelserna i signalList
 send(GENERATE, 0.0, gen, [])  # Starta kundgenereringen
@@ -119,6 +141,9 @@ send(MEASUREMENT, 0.0, q, [])  # Starta mätningarna i kön
 while simTime < stopTime:
     [simTime, signalType, dest, info] = heapq.heappop(signalList)
     dest.treatSignal(signalType, info)
+
+p_blocked_sim = q.numberBlocked / len(gen.arrivalTimes)
+print(f"Simulerad sannolikhet att bli blockad:  {p_blocked_sim}")
 
 
 ###################################################
@@ -144,7 +169,7 @@ plt.hist(
 
 # 2. Plotta den teoretiska kurvan (Teoretiska p_k från pkMM1.py)
 k_vals = np.array([i for i in range(0, max_k + 1)])
-rho = lmbda / mu
+rho = lmbda / mu # Systembelasting eller trafikintensitet
 pk_teoretisk = (rho**k_vals) * (1 - rho)
 
 plt.plot(k_vals, pk_teoretisk, "r-o", linewidth=2, label="Teoretiskt (Kurva)")
